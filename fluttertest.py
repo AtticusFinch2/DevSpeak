@@ -3,6 +3,7 @@ import numpy as np
 from google.cloud import speech
 import re
 import sys
+import pyperclip
 from MicrophoneStream import MicrophoneStream
 # Audio recording parameters
 RATE = 16000
@@ -68,9 +69,11 @@ def listen_print_loop(responses: object, text_box: ft.TextField) -> str:
         The transcribed text.
     """
     num_chars_printed = 0
-    seconds_billed = 0
+    finals = ''
     global Recording
     for response in responses:
+        if not Recording:
+            break
         if not response.results:
             continue
 
@@ -80,23 +83,37 @@ def listen_print_loop(responses: object, text_box: ft.TextField) -> str:
         result = response.results[0]
         if not result.alternatives:
             continue
-
+        
         # Display the transcription of the top alternative.
         transcript = result.alternatives[0].transcript
-
-        # Update the text box with the current transcript
-        text_box.value = transcript
-        text_box.update()
-        print(Recording)
-        # Exit recognition if any of the transcribed phrases could be
-        # one of our keywords.
-        if re.search(r"\b(exit|quit)\b" , transcript, re.I) or not Recording :
-            print("Exiting..")
-            break
+        #overwrite_chars = " " * (num_chars_printed - len(transcript))
+        # Update the text box with the current transcripts
+        if not result.is_final:
+            text_box.value = finals + transcript
+            print(text_box.value, num_chars_printed)
+            text_box.update()
+            #num_chars_printed = len(transcript)
+        else:
+            finals += transcript 
+            text_box.value = finals
+            text_box.update()
+            #num_chars_printed = 0
+            #print(Recording)
+            # Exit recognition if any of the transcribed phrases could be
+            # one of our keywords.
+            if re.search(r"\b(exit|quit)\b" , transcript, re.I) or not Recording :
+                print("Exiting..")
+                break
 
     return transcript
 
 def main(page: ft.Page):
+  global Recording
+  def stop_recording(e):
+    if Recording:
+        Recording = False
+        print("Recording stopped")
+
   global text_box
   page.title = "Audio Recorder"
 
@@ -108,7 +125,15 @@ def main(page: ft.Page):
     multiline=True,
     expand=True,
   )
-
-  page.add(button, text_box)
+  def copy_text(e):
+    pyperclip.copy(text_box.value)  # Copy the text to the clipboard
+    e.control.text = "Copied!"  # Update the button text
+    e.control.update()
+  copy_button = ft.ElevatedButton(
+    text="Copy Text",
+    on_click=copy_text
+  )  
+  page.on_window_close = lambda e: stop_recording(e)  # Handle window close
+  page.add(button, text_box, copy_button)
 
 ft.app(target=main)
