@@ -5,16 +5,38 @@ import re
 import sys
 import pyperclip
 from MicrophoneStream import MicrophoneStream
+import base64
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part, FinishReason
+import vertexai.preview.generative_models as generative_models
+import asyncio
+from prompt import prompt
 # Audio recording parameters
 RATE = 16000
 CHUNK = int(RATE * 2)  # 2000ms  # Flag to track recording status
-audio_data = np.array([])  # Initialize empty audio data arra
 Recording = False  # Initialize recording status
 config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
     sample_rate_hertz=RATE,
     language_code="en-US",
 )
+vertexai.init(project="devspeak-427714", location="us-central1")
+model = GenerativeModel(
+    "gemini-1.5-pro-001",
+  )
+generation_config = {
+    "max_output_tokens": 8192,
+    "temperature": 1,
+    "top_p": 0.95,
+}
+
+safety_settings = {
+    generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+}
+
 def record_audio(e):
   global Recording
   if not Recording:
@@ -22,7 +44,7 @@ def record_audio(e):
     Recording = True
     e.control.text = "Recording..."
     e.control.update()
-    print("Recording...")
+
 
     streaming_config = speech.StreamingRecognitionConfig(
         config=config, interim_results=True
@@ -46,31 +68,14 @@ def record_audio(e):
     e.control.text = "Recording complete!"
     e.control.update()
     # Output the audio data (you can replace this with your desired output method)
+
 def listen_print_loop(responses: object, text_box: ft.TextField) -> str:
-    """Iterates through server responses and updates the text box.
-
-    The responses passed is a generator that will block until a response
-    is provided by the server.
-
-    Each response may contain multiple results, and each result may contain
-    multiple alternatives; for details, see https://goo.gl/tjCPAU.  Here we
-    update the text box with the transcription for the top alternative of the
-    top result.
-
-    In this case, responses are provided for interim results as well. If the
-    response is an interim one, update the text box with the current transcript.
-    For the final one, update the text box with the finalized transcription.
-
-    Args:
-        responses: List of server responses
-        text_box: The Flutter text box to update.
-
-    Returns:
-        The transcribed text.
+    """
     """
     num_chars_printed = 0
-    finals = ''
+    finals = text_box.value
     global Recording
+    print("Recording...")
     for response in responses:
         if not Recording:
             break
@@ -86,27 +91,34 @@ def listen_print_loop(responses: object, text_box: ft.TextField) -> str:
         
         # Display the transcription of the top alternative.
         transcript = result.alternatives[0].transcript
-        #overwrite_chars = " " * (num_chars_printed - len(transcript))
         # Update the text box with the current transcripts
         if not result.is_final:
             text_box.value = finals + transcript
-            print(text_box.value, num_chars_printed)
+            print(transcript)
             text_box.update()
-            #num_chars_printed = len(transcript)
         else:
-            finals += transcript 
+            finals += transcript
+
+
+            # Update the text box with the current transcripts
             text_box.value = finals
             text_box.update()
-            #num_chars_printed = 0
-            #print(Recording)
+            asyncio.run(generate_code(finals, transcript))
             # Exit recognition if any of the transcribed phrases could be
             # one of our keywords.
             if re.search(r"\b(exit|quit)\b" , transcript, re.I) or not Recording :
                 print("Exiting..")
                 break
 
-    return transcript
-
+    return None
+async def generate_code(finals, transcript):
+    tpromt = prompt.format(Current=finals, Transcript=transcript)
+    out = model.generate_content([tpromt], generation_config=generation_config,)
+    text_box.value = out.text
+    finals = out.text
+    print(finals, "Generated")
+    print(out.text, text_box.value, "Updated")
+    text_box.update()
 def main(page: ft.Page):
   global Recording
   def stop_recording(e):
@@ -116,7 +128,6 @@ def main(page: ft.Page):
 
   global text_box
   page.title = "Audio Recorder"
-
   button = ft.ElevatedButton(
     text="Record Audio",
     on_click=record_audio
