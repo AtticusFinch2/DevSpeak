@@ -1,5 +1,4 @@
 import flet as ft
-import numpy as np
 from google.cloud import speech
 import re
 import sys
@@ -10,10 +9,11 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part, FinishReason
 import vertexai.preview.generative_models as generative_models
 import asyncio
-from prompt import prompt
+from markdown import markdown
+from prompt import prompt, classify_prompt
 # Audio recording parameters
 RATE = 16000
-CHUNK = int(RATE * 2)  # 2000ms  # Flag to track recording status
+CHUNK = int(RATE * 5)  # 2000ms  # Flag to track recording status
 Recording = False  # Initialize recording status
 config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
@@ -29,7 +29,7 @@ generation_config = {
     "temperature": 1,
     "top_p": 0.95,
 }
-
+finals = ''
 safety_settings = {
     generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
     generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -61,20 +61,21 @@ def record_audio(e):
         responses = client.streaming_recognize(streaming_config, requests)
         # Now, put the transcription responses to use.
         listen_print_loop(responses, text_box)
+        e.control.text = "Recording complete!"
+        e.control.update()
         print("Done recording")
   else:
     # Stop recording
     Recording = False
-    e.control.text = "Recording complete!"
-    e.control.update()
+    
     # Output the audio data (you can replace this with your desired output method)
 
 def listen_print_loop(responses: object, text_box: ft.TextField) -> str:
     """
     """
-    num_chars_printed = 0
-    finals = text_box.value
     global Recording
+    global finals
+    finals = text_box.value
     print("Recording...")
     for response in responses:
         if not Recording:
@@ -98,27 +99,52 @@ def listen_print_loop(responses: object, text_box: ft.TextField) -> str:
             text_box.update()
         else:
             finals += transcript
-
-
             # Update the text box with the current transcripts
             text_box.value = finals
             text_box.update()
-            asyncio.run(generate_code(finals, transcript))
+            asyncio.run(generate_code(finals))
             # Exit recognition if any of the transcribed phrases could be
             # one of our keywords.
             if re.search(r"\b(exit|quit)\b" , transcript, re.I) or not Recording :
                 print("Exiting..")
                 break
+            if re.search(r"\b(reset|clear)\b", transcript, re.I):
+                finals = ''
+                print(finals)
+                text_box.value = finals
+                text_box.update()
+                print("Cleared")
+                continue
+                
 
     return None
-async def generate_code(finals, transcript):
+async def generate_code(transcript):
+    global finals
+    global gem_out
+    print(transcript)
+    cprompt = classify_prompt.format(Transcript = transcript)
+    print("sending classifyt prompt")
+    try:
+      cout = model.generate_content([cprompt], generation_config=generation_config,)
+    except:
+      print("Failed to classify transcript")
+      return
+    if not re.search(r'\b(Finished and Code related)\b', cout.text, re.I):
+       print("Code not generated", cout.text)
+       return
     tpromt = prompt.format(Current=finals, Transcript=transcript)
-    out = model.generate_content([tpromt], generation_config=generation_config,)
-    text_box.value = out.text
-    finals = out.text
+    print("sending code prompt")
+    try:
+      out = model.generate_content([tpromt], generation_config=generation_config,)
+    except:
+      print("Failed to generate code")
+      return
+    print(out.text)
+    gem_out.value = out.text
+    finals = ''
     print(finals, "Generated")
-    print(out.text, text_box.value, "Updated")
-    text_box.update()
+    print(out.text, gem_out.value, "Updated")
+    gem_out.update()
 def main(page: ft.Page):
   global Recording
   def stop_recording(e):
@@ -136,8 +162,14 @@ def main(page: ft.Page):
     multiline=True,
     expand=True,
   )
+  global gem_out
+  gem_out = ft.TextField(
+    multiline=True,
+    expand=True,
+    read_only = True
+  )
   def copy_text(e):
-    pyperclip.copy(text_box.value)  # Copy the text to the clipboard
+    pyperclip.copy(gem_out.value)  # Copy the text to the clipboard
     e.control.text = "Copied!"  # Update the button text
     e.control.update()
   copy_button = ft.ElevatedButton(
@@ -145,6 +177,6 @@ def main(page: ft.Page):
     on_click=copy_text
   )  
   page.on_window_close = lambda e: stop_recording(e)  # Handle window close
-  page.add(button, text_box, copy_button)
+  page.add(button, text_box,gem_out, copy_button)
 
 ft.app(target=main)
