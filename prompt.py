@@ -1,7 +1,7 @@
 classify_prompt = """Multi-choice problem: Define the category of the transcript?
 Categories:
-- Unfinished Thought
 - Not related to code
+- Unfinished Thought
 - Finished and Code related
 
 Please only print the category name without anything else.
@@ -13,7 +13,19 @@ Ticket: import
 Category: Unfinished Thought
 
 Ticket: for i in range ten
-Category: s
+Category: Finished and Code related
+
+Ticket: print main
+Category: Finished and Code related
+
+Ticket: print main
+Category: Finished and Code related
+
+Ticket: print I times bar
+Category: Finished and Code related
+
+Ticket: i plus equals 1
+Category: Finished and Code related
 
 Ticket: wait what
 Category: Not related to code
@@ -58,10 +70,10 @@ output: ```python
 def foo(bar):
 for i in range(10):
 print(i * bar)
-
-input: Current File:
-```{Current}
 ```
+input: Current File:
+{Current}
+
 Transcript:
 {Transcript}
 output:
