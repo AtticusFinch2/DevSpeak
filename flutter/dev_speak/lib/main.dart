@@ -6,6 +6,11 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'package:sprintf/sprintf.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+
+import 'prompt.dart';
+
 void main() {
   runApp(MyApp());
 }
@@ -38,17 +43,29 @@ class _MyHomePageState extends State<MyHomePage> {
   String _recognizedWords = '';
   String _generatedCode = '';
   final _formKey = GlobalKey<FormState>();
+  Timer? _generateCodeTimer;
+  bool _canGenerateCode = true;
 
   @override
   void initState() {
     super.initState();
     _initSpeech();
   }
+  @override
+  void dispose() {
+    _generateCodeTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _initSpeech() async {
     bool available = await _speechToText.initialize(
       onStatus: (status) {
         print('Speech status: $status');
+        if (status == "notListening") {
+          setState(() {
+            _isListening = false;
+          });
+        }
       },
       onError: (error) {
         print('Speech error: $error');
@@ -62,18 +79,22 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _startListening() async {
+    print("start listening called");
     try {
+      stt.SpeechListenOptions opt = stt.SpeechListenOptions(listenMode : stt.ListenMode.dictation, autoPunctuation  : false, partialResults : true);
+      await _speechToText.cancel();
       await _speechToText.listen(
         onResult: (result) {
           setState(() {
-            _recognizedWords = result.recognizedWords;
-            print('Recognized words: $result');
+            _recognizedWords = result.recognizedWords.toLowerCase().replaceAll(RegExp(r'[.,!?;:]'), '');
+            //print('Recognized words: $result');          
             _processTranscript(_recognizedWords);
           });
         },
         onSoundLevelChange: (level) {
           print('Sound level: $level');
         },
+        listenOptions: opt
       );
       setState(() {
         _isListening = true;
@@ -84,17 +105,36 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _stopListening() async {
-    await _speechToText.stop();
+    await _speechToText.cancel();
     setState(() {
       _isListening = false;
     });
+    print("stop done");
+  }
+  Future<void> _resetTranscript() async {
+    setState(() {
+      _recognizedWords = '';
+    });
+    await _stopListening();
+    print("started again");
+    await _startListening();
+    
   }
 
+
   Future<void> _processTranscript(String transcript) async {
+    print('Processing transcript: $transcript');
     // Replace this with your Gemini API call logic
     // You'll need to implement the API call and handle the response
     // For simplicity, we'll just print the transcript here
-    print('Transcript: $transcript');
+    if(transcript.contains(RegExp(r'clear')) == true){
+      _resetTranscript();
+      setState(() {
+        print("cleared");
+      });
+      
+      return;
+    }
     _generateCode(transcript);
   }
 
@@ -102,8 +142,62 @@ class _MyHomePageState extends State<MyHomePage> {
     // Replace this with your Gemini API call logic
     // You'll need to implement the API call and handle the response
     // For simplicity, we'll just print the transcript here
-    print('Generating code...');
-    try {
+   // print("called generate");
+    if (!_canGenerateCode || transcript.contains(RegExp(r'send')) != true) {
+      //print("Can't generate code");
+      return; // Don't generate code if the flag is false
+    }
+    setState(() {
+      _canGenerateCode = false;
+    });
+    _generateCodeTimer = Timer(const Duration(seconds: 5), () {
+      setState(() {
+        _canGenerateCode = true; // Allow code generation again
+      });
+    });
+    print('Generating code...' + transcript);
+    try { 
+    String classify = sprintf(classify_prompt, [transcript]);
+    const String API_KEY = String.fromEnvironment('API_KEY');
+    final model = GenerativeModel(model: 'gemini-1.5-flash', apiKey: API_KEY);
+    final content = [Content.text(classify)];
+    final response = await model.generateContent(content);
+    if (response.text != null && response.text?.contains(RegExp(r'Not related to code'))  == true){
+      print("Not related");
+      setState
+      (() {
+        _recognizedWords = "";
+      }
+      );
+      return;
+    }
+    else if (response.text != null && response.text?.contains(RegExp(r'Unfinished Thought')) == true){
+      print("Unfinished");
+      return;
+      
+    }
+    else if (response.text != null && response.text?.contains(RegExp(r'Finished and Code related'))  == true){
+      String generate = sprintf(code_prompt, [_generatedCode, transcript]);
+      final content = [Content.text(generate)];
+      final response = await model.generateContent(content);
+      if (response.text != null) {
+        _resetTranscript();
+        setState(() {
+          _generatedCode = (response.text) as String;
+        });
+      print(response.text);
+      }}
+    else {
+      print(response.text);
+    }
+    }
+    catch (e){
+      print("Generation failed");
+      print(e);
+    }
+  
+     
+    /*try {
       final response = await http.post(
         Uri.parse('https://your-gemini-api-endpoint.com'),
         headers: {'Content-Type': 'application/json'},
@@ -120,7 +214,7 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     } catch (e) {
       print('Error generating code: $e');
-    }
+    }*/
   }
 
   @override
